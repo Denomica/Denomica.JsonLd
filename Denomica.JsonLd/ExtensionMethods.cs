@@ -66,6 +66,46 @@ namespace Denomica.JsonLd
         }
 
         /// <summary>
+        /// Extracts all JSON-LD script elements from the HTML document represented by the specified container.
+        /// </summary>
+        /// <remarks>Only script elements with a type attribute of 'application/ld+json' are considered.
+        /// Invalid or unparsable JSON-LD scripts are ignored.</remarks>
+        /// <param name="container">The HTML document container from which to extract JSON-LD script elements. Cannot be null.</param>
+        /// <returns>An enumerable collection of JSON elements, each representing the parsed content of a JSON-LD script element.
+        /// The collection is empty if no valid JSON-LD scripts are found.</returns>
+        public static IEnumerable<JsonElement> GetJsonLDElements(this HtmlDocumentContainer container)
+        {
+            var document = container.CreateHtmlDocument();
+            foreach (var htmlNode in document.QuerySelectorAll("script[type='application/ld+json']"))
+            {
+                JsonElement? elem = null;
+                try
+                {
+                    using (var strm = new MemoryStream())
+                    {
+                        using (var writer = new StreamWriter(strm))
+                        {
+                            writer.Write(htmlNode.InnerText);
+                            writer.Flush();
+                            strm.Position = 0;
+
+                            var doc = JsonDocument.Parse(strm);
+                            elem = doc.RootElement;
+                        }
+                    }
+                }
+                catch { }
+
+                if (elem.HasValue)
+                {
+                    yield return elem.Value;
+                }
+            }
+        }
+
+
+
+        /// <summary>
         /// Asynchronously retrieves JSON-LD objects from the specified HTML document.
         /// </summary>
         /// <remarks>This method processes the HTML document to locate and parse JSON-LD elements,
@@ -160,6 +200,105 @@ namespace Denomica.JsonLd
                 }
             }
         }
+
+        /// <summary>
+        /// Retrieves all JSON-LD objects found within the specified HTML document container.
+        /// </summary>
+        /// <param name="container">The HTML document container to search for JSON-LD objects. Cannot be null.</param>
+        /// <returns>An enumerable collection of JSON elements representing each JSON-LD object found in the container. The
+        /// collection is empty if no JSON-LD objects are present.</returns>
+        public static IEnumerable<JsonElement> GetJsonLDObjects(this HtmlDocumentContainer container)
+        {
+            foreach (var elem in container.GetJsonLDElements())
+            {
+                foreach (var obj in elem.GetJsonLDObjects())
+                {
+                    yield return obj;
+                }
+            }
+
+            yield break;
+        }
+
+        /// <summary>
+        /// Retrieves all JSON-LD objects from the specified HTML document container that match any of the provided
+        /// schema.org types.
+        /// </summary>
+        /// <remarks>This method filters JSON-LD objects based on their schema.org type. Type matching is
+        /// case-sensitive. If no types are specified, the method yields no results.</remarks>
+        /// <param name="container">The HTML document container from which to extract JSON-LD objects. Cannot be null.</param>
+        /// <param name="types">An array of schema.org type names to filter the JSON-LD objects. If empty, no objects are returned.</param>
+        /// <returns>An enumerable collection of JSON elements representing JSON-LD objects whose type matches any of the
+        /// specified types. The collection is empty if no matching objects are found.</returns>
+        public static IEnumerable<JsonElement> GetJsonLDObjects(this HtmlDocumentContainer container, params string[] types)
+        {
+            foreach (var obj in container.GetJsonLDObjects())
+            {
+                if (obj.IsSchemaOrgObjectType(types))
+                {
+                    yield return obj;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enumerates all JSON-LD object elements contained within the specified JSON element, including those within
+        /// arrays and graph elements.
+        /// </summary>
+        /// <remarks>This method recursively traverses arrays and graph elements to locate all JSON-LD
+        /// objects. Only elements recognized as JSON-LD objects or contained within recognized graph structures are
+        /// returned.</remarks>
+        /// <param name="element">The JSON element to search for JSON-LD objects. Must represent a JSON object, array, or graph element.</param>
+        /// <returns>An enumerable collection of JSON elements, each representing a JSON-LD object found within the input
+        /// element. The collection is empty if no JSON-LD objects are found.</returns>
+        public static IEnumerable<JsonElement> GetJsonLDObjects(this JsonElement element)
+        {
+            if (element.IsJsonLdGraphElement())
+            {
+                foreach (var obj in element.EnumerateGraph())
+                {
+                    yield return obj;
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in element.EnumerateArray())
+                {
+                    foreach (var obj in item.GetJsonLDObjects())
+                    {
+                        yield return obj;
+                    }
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.Object && element.IsSchemaOrgElement())
+            {
+                yield return element;
+            }
+        }
+
+        /// <summary>
+        /// Enumerates all JSON-LD objects within the specified JSON element that match any of the given schema.org
+        /// types.
+        /// </summary>
+        /// <remarks>This method filters JSON-LD objects by their schema.org type. Type matching is
+        /// case-sensitive. Use this method to extract only those objects relevant to specific schema.org types from a
+        /// larger JSON-LD graph.</remarks>
+        /// <param name="element">The JSON element to search for JSON-LD objects.</param>
+        /// <param name="types">An array of schema.org type names to match. If empty, no objects are returned.</param>
+        /// <returns>An enumerable collection of JSON elements representing JSON-LD objects of the specified types. The
+        /// collection is empty if no matching objects are found.</returns>
+        public static IEnumerable<JsonElement> GetJsonLDObjects(this JsonElement element, params string[] types)
+        {
+            foreach (var obj in element.GetJsonLDObjects())
+            {
+                if (obj.IsSchemaOrgObjectType(types))
+                {
+                    yield return obj;
+                }
+            }
+        }
+
+
 
         /// <summary>
         /// Determines whether the specified <see cref="JsonElement"/> is of any of the given Schema.org object types.
